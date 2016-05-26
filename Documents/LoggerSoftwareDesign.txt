@@ -1,0 +1,358 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stddef.h>
+//splint #include <unistd.h>
+#include <limits.h>
+#include <string.h>
+#include <time.h>
+//#include <linux/input.h>
+//#include <fcntl.h>
+//#include <errno.h>
+
+#define	NBBY		CHAR_BIT
+#define AVAILABLE_MEM	(24)
+#define ARRAY_COUNT	(int)(AVAILABLE_MEM/sizeof(struct data))
+#define TEMP_SENSE	10
+#define HUMID_SENSE	20
+
+union min_secs{
+	unsigned int tm_min_sec;
+	struct {
+		unsigned char sec;
+		unsigned char min;
+	};
+};
+
+union day_hrs{
+	unsigned int tm_day_hrs;
+	struct {
+		unsigned char hrs;
+		unsigned char day;
+	};
+};
+
+struct rtc_time {
+	union min_secs mss;
+	union day_hrs dhs;
+	};
+
+struct work {
+	struct rtc_time work_period;
+	struct rtc_time rtc_next;
+	unsigned int work_id;
+	void * data;
+	void (*fp)(void*);
+};
+
+static void temp_loop(void* d)
+{
+}
+
+static void humid_loop(void *d)
+{
+}
+
+static struct work work_list[] = {
+	{	
+		.work_period.mss.sec = 6,
+		.work_period.mss.min = 1,
+		.work_id = TEMP_SENSE,
+		.fp = temp_loop,
+	},{
+		.work_period.mss.sec = 4,
+		.work_period.mss.min = 2,
+		.work_id = HUMID_SENSE,
+		.fp = humid_loop,
+	}
+};	
+
+
+static int update_work_queue(struct work *pwk, int count)
+{
+	struct work *pw = pwk+count;
+	int i = count, j = 0;
+	unsigned char test1 = 156, test2 = 58;
+	printf("%x, %x\n", (test1), (test2));
+
+	while ((j+1) < i) {
+		pw--;
+		printf("mss:sec=%d,min=%d,tm_min=%d\n", pw->work_period.mss.sec, pw->work_period.mss.min, pw->work_period.mss.tm_min_sec);
+		printf("mss:hrs=%d,day=%d\n", pw->work_period.dhs.hrs, pw->work_period.dhs.day);
+		pw->rtc_next.mss.tm_min_sec = pw->work_period.mss.tm_min_sec - (pw-1)->work_period.mss.tm_min_sec;
+		if (pw->rtc_next.mss.sec > 59)
+			pw->rtc_next.mss.tm_min_sec -= (unsigned char)(196);
+		printf("mss:sec=%d,min=%d,tm_min=%d\n", pw->rtc_next.mss.sec, pw->rtc_next.mss.min, pw->rtc_next.mss.tm_min_sec);
+		j++;
+	}
+	return 0;
+}
+
+struct data {
+	unsigned int count;
+	unsigned int data;
+};
+
+struct data_bucket {
+	unsigned int event_count;
+	struct data log_data[ARRAY_COUNT];
+};
+
+static struct data_bucket ldat;
+unsigned char comp_array[AVAILABLE_MEM];
+unsigned char uncomp_array[AVAILABLE_MEM];
+char compd[] = "y a d d a _ y a d d a _ y  d d a * , _ b l a h _ b l a h _ b l a h"; 
+char test_out[1024] = {'0'};
+char uncompress[1024] = {'0'};
+size_t compress(void *s_start, void *d_start, size_t s_len);
+size_t decompress(void *s_start, void *d_start, size_t s_len, size_t d_len);
+//struct state
+int print_logs(void)
+{
+	int i;
+
+	printf("========================================\n");
+	for (i=0; i!= ARRAY_COUNT; i++) {
+		printf("Data=%u,Count=%u\n", ldat.log_data[i].data, ldat.log_data[i].count);
+	}
+	printf("Total Events:=%u\n",ldat.event_count);
+	return 0;
+}
+
+static unsigned int temp = 0;
+static unsigned int prev = 0;
+static int ij = -1;	
+int loop(void *pdata, int count)
+{
+	int ret = 0;
+	scanf("%u", &temp);
+	printf("Data=%u\n", temp);
+	if (temp != prev) {
+		if ((ij+1) == ARRAY_COUNT) {
+			ret = -1;
+			goto exit;
+		}
+		ldat.log_data[++ij].data = temp;
+		ldat.log_data[ij].count++;
+		prev = temp;
+	} else {
+		ldat.log_data[ij].count++;
+	}
+	ldat.event_count++;
+exit:
+	return ret;
+}
+
+int get_bit(int number, char * array)
+{
+#define BIT_MASK	1
+	int byte = number/CHAR_BIT;
+	int bit = number%CHAR_BIT;
+	return array[byte] >> bit & BIT_MASK;
+}
+
+int remain(int argc, char* argv[])
+{
+	//TODO: Read data from file
+	int i = 0;
+	printf(";) ArrayCount=%d\n",ARRAY_COUNT);
+	printf("argcount=%d\n",argc);
+	while (i!= argc) {
+		printf("String=%s\n", argv[i++]);
+	}
+
+	update_work_queue(work_list, sizeof(work_list)/sizeof(struct work));
+#if 0
+	printf("Compressing...\n");
+	i = compress(compd, test_out, sizeof(compd));
+	printf("[%s]\n",test_out);
+	i = 10;
+	while (i--) {
+		sleep(1);
+		if(loop(NULL, 0))
+			break;	
+	}
+	print_logs();
+#endif
+	return 0;
+}
+
+#define CHAR_SET 256
+static char value_count[CHAR_SET];
+int print_array(char *cp, size_t sz, unsigned int width)
+{
+	unsigned int print_break = 0;
+	unsigned int count;
+	char *cword = cp;
+	char *temp;
+
+	if (!cp || (sz==0))
+		return -1;
+
+	if (width == 0)
+		width = 8;
+
+	printf("\n");
+	while (sz) {
+		printf("0x%x\t", *cword++);
+		print_break++;
+		if (print_break == width) {
+			printf("\t");
+			// Print characters
+			for (temp = cword - width; (temp != cword); temp++) {
+				printf(".%c\t", *temp);
+			}
+			printf("\n");
+			print_break = 0;
+		}
+		sz--;
+	}
+	// Print remaining characters
+	if (print_break != width) {
+		count = width - print_break;
+		while (count--)
+			printf("	\t");
+		temp = cword - print_break;
+		for (temp = cword - print_break; (temp != cword); temp++) {
+			printf(".%c\t", *temp);
+		}
+	}
+	printf("\n");
+	return 0;
+}
+
+struct node_data{
+	char val;
+	int count;
+};
+
+struct leaf {
+	struct leaf *llf;
+	struct leaf *rlf;
+	struct node_data dt;
+};
+
+static struct leaf tree[CHAR_SET];
+static int current_position = 0;
+static int create_leaf(struct node_data *nd, struct leaf*left, struct leaf* right)
+{
+
+	tree[current_position].dt = *nd;
+	printf("Character=%c,Count=%d\n", tree[current_position].dt.val, tree[current_position].dt.count);
+	tree[current_position].llf = left;	
+	tree[current_position].rlf = right;	
+	current_position++;
+	return (current_position-1);
+}
+int remove_leaf(struct node_data *nd);
+int search_leaf(struct node_data *nd);
+static void sort_tree(struct leaf *head, int first, int last)
+{
+	int i = 0;
+	int j = 0;
+	struct leaf temp;
+
+	for (i=first; i < last; i++)	{
+		for (j=i+1; j < last; j++) {
+			if (head[i].dt.count < head[j].dt.count) {
+				memcpy(&temp, &head[i],sizeof(temp));
+				memcpy(&head[i], &head[j], sizeof(temp));
+				memcpy(&head[j], &temp, sizeof(temp));
+			}
+		}
+	}
+	for (i=first; i!=last;i++) {
+		printf("[%c]{%d}",head[i].dt.val, head[i].dt.count);
+	}
+}
+static int generate_tree(int last_count)
+{
+	int first = 0;
+	int last = current_position - 1;
+	int i = 0;
+	struct node_data temp_nd;
+
+	while (first != last) {
+		printf("\n--------------------------------------\n");
+		for (i = first; i <= (last-1); i= i+2) {
+			temp_nd.val ='*';
+			temp_nd.count = tree[i].dt.count + tree[i+1].dt.count;
+			//		temp_nd.llf = &tree[i].dt;
+			//		temp_nd.rlf = &tree[i+1].dt;
+			//			printf("Char1=%c,Char2=%c\n", tree[i].dt.val, tree[i+1].dt.val);
+			create_leaf(&temp_nd, &tree[i], &tree[i+1]);
+		}
+		//		printf("\nlast=%d======i=%d========================\n",last,i);
+		if (i == last) {
+			//			printf("\n==================================\n");
+			temp_nd.val ='*';
+			temp_nd.count = tree[last].dt.count;
+			//			printf("Char1=%c\n", tree[last].dt.val);
+			create_leaf(&temp_nd, &tree[last], NULL);
+		}
+		first = last + 1;
+		last = current_position - 1;
+		sort_tree(tree, first, current_position);
+	}
+	return last;
+}
+
+static void print_tree(struct leaf *head)
+{
+	if (head) {
+		//printf("llf=%p\n", head->llf);
+		//printf("rlf=%p\n", head->rlf);
+		print_tree(head->llf);
+		printf("val=%c ", head->dt.val);
+		printf("count=%d\n", head->dt.count);
+		print_tree(head->rlf);
+	}
+}
+
+
+	size_t
+compress(void *s_start, void *d_start, size_t s_len)
+{
+	unsigned char *ip = s_start;
+	unsigned int count = s_len;
+	struct node_data temp_nd;
+
+	if (!s_start || !d_start || (count==0))
+		return 0;
+
+	while (count) {
+		printf("%d ", *ip);
+		value_count[*ip]++;
+		ip++;
+		count--;
+	}
+	//	print_array(value_count, 256, 6);
+	for (count = 0; count != CHAR_SET; count++) {
+		// If character is present in buffer add it to tree
+		if (value_count[count]) {
+			temp_nd.val = count;
+			temp_nd.count = value_count[count];
+			create_leaf(&temp_nd, NULL, NULL);
+		}
+	}
+	sort_tree(tree, 0, current_position);
+	generate_tree(current_position);
+	print_tree(&tree[current_position-1]);
+	return 0;
+}
+
+
+	size_t
+decompress(void *s_start, void *d_start, size_t s_len, size_t d_len)
+{
+	return 0;
+}
+
+unsigned checksum32(void *cp_arg, size_t length)
+{
+	unsigned char *cp, *ep;
+	unsigned int sum = 0;
+
+	for (cp = cp_arg, ep = cp + length; cp < ep; cp++)
+		sum = ((sum >> 1) | (sum << 31)) + *cp;
+	return (sum);
+}
